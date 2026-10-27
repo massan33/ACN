@@ -124,20 +124,20 @@ function setupLights(root){
     o.material.emissive=WARM.clone();
     box.setFromObject(o);box.getCenter(c);box.getSize(sz);
     if(n.includes('DL')){o.material.emissiveIntensity=12;o.material.color.set(0xffffff);found.dl.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
-    else if(n.includes('ライン')){o.material.emissiveIntensity=1.2;found.line.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
+    else if(n.includes('ライン')){o.material.emissiveIntensity=0.45;found.line.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
     else {o.material.emissiveIntensity=0.9;}
   });
   const near=(arr,p,d)=>arr.some(q=>q.p.distanceTo(p)<d);
   const dls=[];for(const f of found.dl)if(!near(dls,f.p,0.05))dls.push(f);
   for(const f of dls){
     const narrow=f.s<0.06;// φ25 マイクロダウンライト 24°
-    const sp=new THREE.SpotLight(0xffd9a8,narrow?28:40,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
+    const sp=new THREE.SpotLight(0xffd9a8,narrow?8:14,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
     sp.position.copy(f.p).add(new THREE.Vector3(0,-0.02,0));
     sp.target.position.copy(f.p).add(new THREE.Vector3(0,-3,0));
     scene.add(sp,sp.target);
   }
   const lines=[];for(const f of found.line)if(!near(lines,f.p,0.4))lines.push(f);
-  if(!MOBILE||lines.length<=8)for(const f of lines){const pl=new THREE.PointLight(0xffd2a0,1.5,4,2);pl.position.copy(f.p).add(new THREE.Vector3(0,-0.08,0));scene.add(pl);}
+  if(false)for(const f of lines){const pl=new THREE.PointLight(0xffd2a0,0.6,3,2);pl.position.copy(f.p).add(new THREE.Vector3(0,-0.08,0));scene.add(pl);}
   window.__lights={dl:dls.length,line:lines.length};
 }
 
