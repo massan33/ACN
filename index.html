@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>ACN銀座ビル10F 内観ウォークスルー</title>
+<style>
+  :root{--bg:#111;--fg:#eee;--sub:#aaa;--panel:rgba(20,20,20,.78);--line:rgba(255,255,255,.14);--accent:#d9b36c}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);overflow:hidden;
+    font-family:"Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+  canvas{display:block;touch-action:none}
+  #top{position:fixed;left:12px;top:12px;right:12px;display:flex;gap:8px;align-items:flex-start;pointer-events:none}
+  #title{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.4;pointer-events:auto}
+  #title b{font-size:14px;letter-spacing:.04em}
+  #title span{color:var(--sub);font-size:12px}
+  #helpBtn{margin-left:auto;pointer-events:auto}
+  button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer}
+  button:hover{border-color:rgba(255,255,255,.35)}
+  button.on{border-color:var(--accent);color:var(--accent)}
+  #views{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    display:flex;gap:6px;overflow-x:auto;background:linear-gradient(transparent,rgba(0,0,0,.6));scrollbar-width:none}
+  #views::-webkit-scrollbar{display:none}
+  #views button{flex:0 0 auto;font-size:12px;padding:7px 10px;white-space:nowrap}
+  #help{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);z-index:5}
+  #help.hide{display:none}
+  #help .box{background:#1b1b1b;border:1px solid var(--line);border-radius:12px;padding:20px 22px;max-width:420px;margin:16px;font-size:14px;line-height:1.75}
+  #help h2{margin:0 0 8px;font-size:16px}
+  #help table{border-collapse:collapse;margin:6px 0 14px}
+  #help td{padding:2px 12px 2px 0;vertical-align:top}
+  #help td:first-child{color:var(--accent);white-space:nowrap}
+  #load{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--bg);z-index:10;font-size:13px;color:var(--sub)}
+  #bar{width:min(320px,70vw);height:4px;background:#333;border-radius:2px;overflow:hidden}
+  #bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  #marker{position:fixed;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid var(--accent);border-radius:50%;pointer-events:none;opacity:0;transition:opacity .3s}
+</style>
+</head>
+<body>
+<div id="load"><div>モデルを読み込んでいます…</div><div id="bar"><i></i></div><div id="pct">0%</div></div>
+<div id="top">
+  <div id="title"><b>ACN銀座ビル10F 内観ウォークスルー</b><br><span id="where">05 北東角から焼台・厨房</span></div>
+  <button id="helpBtn">操作方法</button>
+</div>
+<div id="views"></div>
+<div id="marker"></div>
+<div id="help"><div class="box">
+  <h2>操作方法</h2>
+  <table>
+    <tr><td>見回す</td><td>ドラッグ（スマホは指でスワイプ）</td></tr>
+    <tr><td>移動する</td><td>床をクリック／タップ</td></tr>
+    <tr><td>歩く（PC）</td><td>W A S D または 矢印キー（Shiftで速く）</td></tr>
+    <tr><td>視点</td><td>下のボタンで各アングルへ移動</td></tr>
+  </table>
+  <div style="color:var(--sub);font-size:12px">店内の通路と厨房の中だけを歩けます。目線の高さは1,500mmです。</div>
+  <div style="text-align:right;margin-top:14px"><button id="closeHelp">はじめる</button></div>
+</div></div>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+
+/* ---------- 歩行可能範囲（Rhino座標 mm、walk_core.py と同じ） ---------- */
+const WALK_SEAT=[[150,1150,2700,1914],[2470,910,5900,1914],[4874,910,5900,3842],[4874,910,5535,8346],[2129,7662,5535,8346],[1700,8062,2200,8346]];
+const WALK_KITCHEN=[[230,2814,1749,8346],[230,2814,3974,6762]];
+const OBSTACLE=[[2333,3558,3477,6094],[135,600,910,1380],[135,3842,910,4618],[135,7834,910,8610],[1749,6314,2129,8062],[2320,0,2854,1150]];
+const KITCHEN_FL=220, EYE=1500;
+const ins=(x,y,r)=>r[0]<x&&x<r[2]&&r[1]<y&&y<r[3];
+const allowed=(x,y)=>!OBSTACLE.some(r=>ins(x,y,r))&&[...WALK_SEAT,...WALK_KITCHEN].some(r=>ins(x,y,r));
+const inKitchen=(x,y)=>WALK_KITCHEN.some(r=>ins(x,y,r))&&!WALK_SEAT.some(r=>ins(x,y,r));
+const eyeAt=(x,y)=>EYE+(inKitchen(x,y)?KITCHEN_FL:0);
+
+/* ---------- 視点（各ビューのカメラ位置・向き、レンズmm） ---------- */
+const VIEWS=[
+ ['01','入口から店内全景',[5450,5000,1500],[-0.9425,-0.3341,0],16],
+ ['02','南東角からコの字カウンター',[5800,1000,1500],[-0.6097,0.7926,0],16],
+ ['03','南通路から西を望む',[5150,1250,1450],[-0.9798,0.1998,0],16],
+ ['04','北通路から東を望む',[2250,8250,1500],[0.8765,-0.4814,0],16],
+ ['05','北東角から焼台・厨房',[5450,8250,1500],[-0.5851,-0.8109,0],16],
+ ['06','カウンター着座目線',[3700,1600,1150],[-0.2169,0.9762,0],16],
+ ['07','東通路 南から北へ',[5200,1050,1500],[0,1,0],18],
+ ['08','北通路 東から西へ',[5450,8050,1500],[-1,0,0],18],
+ ['09','南通路 西から東へ',[700,1750,1500],[1,0,0],18],
+ ['12','厨房内から客席を望む',[3800,6600,1720],[0.4679,-0.8838,0],20],
+ ['13','焼台・フード正面',[5300,4960,1500],[-1,0,0],20],
+ ['14','厨房北側から焼台・フード',[2900,6850,1720],[0,-1,0],16],
+ ['15','厨房から焼台の手元',[1975,5050,1700],[0.8513,-0.1380,-0.5062],16.76],
+];
+const START='05';
+
+/* ---------- three.js ---------- */
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.35;
+document.body.prepend(renderer.domElement);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0c0c0c);
+const pmrem=new THREE.PMREMGenerator(renderer);
+scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
+scene.add(new THREE.HemisphereLight(0xfff1dd,0x2a2622,0.9));
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,100);
+camera.rotation.order='YXZ';
+
+// Rhino(mm, Z上) → glTF(m, Y上)
+const toGL=(x,y,z)=>new THREE.Vector3(x/1000,z/1000,-y/1000);
+
+let lensMM=16;
+function applyFov(){ // 横画角をレンズ基準で保ち、縦長画面でも見切れにくくする
+  const a=innerWidth/innerHeight;
+  const hf=2*Math.atan(18/lensMM), vfFromH=2*Math.atan(Math.tan(hf/2)/a);
+  const vf=a>=1.5?2*Math.atan(12/lensMM):vfFromH;
+  camera.fov=Math.min(THREE.MathUtils.radToDeg(vf),100);
+  camera.aspect=a;camera.updateProjectionMatrix();
+}
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);applyFov();});
+
+/* 状態（Rhino座標 mm） */
+const st={x:5450,y:8250,eye:1500,yaw:0,pitch:0};
+let path=null; // 移動経路 [[x,y],...]
+let viewTween=null;
+
+function setFromDir(d){ // Rhino方向ベクトル → yaw/pitch
+  const g=new THREE.Vector3(d[0],d[2],-d[1]).normalize();
+  st.yaw=Math.atan2(-g.x,-g.z); st.pitch=Math.asin(THREE.MathUtils.clamp(g.y,-1,1));
+}
+function goView(v,instant){
+  const [id,name,c,d,lens]=v;
+  const from={x:st.x,y:st.y,eye:st.eye,yaw:st.yaw,pitch:st.pitch,lens:lensMM};
+  const to={x:c[0],y:c[1],eye:c[2]};
+  const tmp={...st};setFromDir(d);to.yaw=st.yaw;to.pitch=st.pitch;Object.assign(st,tmp);
+  let dy=to.yaw-from.yaw;dy=Math.atan2(Math.sin(dy),Math.cos(dy));to.yaw=from.yaw+dy;
+  to.lens=lens;path=null;
+  if(instant){Object.assign(st,{x:to.x,y:to.y,eye:to.eye,yaw:to.yaw,pitch:to.pitch});lensMM=lens;applyFov();viewTween=null;}
+  else viewTween={from,to,t:0,dur:1.2};
+  document.getElementById('where').textContent=id+' '+name;
+  document.querySelectorAll('#views button').forEach(b=>b.classList.toggle('on',b.dataset.id===id));
+}
+const vbox=document.getElementById('views');
+for(const v of VIEWS){const b=document.createElement('button');b.textContent=v[0]+' '+v[1];b.dataset.id=v[0];b.onclick=()=>goView(v,false);vbox.appendChild(b);}
+
+/* ---------- 経路探索（100mmグリッド） ---------- */
+const G=100,GX0=0,GY0=0,GW=66,GH=88;
+const cell=(i,j)=>allowed(GX0+i*G+G/2,GY0+j*G+G/2);
+const grid=[];for(let j=0;j<GH;j++)for(let i=0;i<GW;i++)grid.push(cell(i,j));
+function lineOK(a,b){const n=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/40);for(let k=1;k<=n;k++){const t=k/n;if(!allowed(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t))return false;}return true;}
+function nearestCell(x,y){let best=null,bd=1e18;for(let j=0;j<GH;j++)for(let i=0;i<GW;i++)if(grid[j*GW+i]){const cx=i*G+G/2,cy=j*G+G/2,d=(cx-x)**2+(cy-y)**2;if(d<bd){bd=d;best=[i,j];}}return best;}
+function findPath(sx,sy,tx,ty){
+  if(!allowed(tx,ty)){const c=nearestCell(tx,ty);if(!c)return null;tx=c[0]*G+G/2;ty=c[1]*G+G/2;}
+  if(lineOK([sx,sy],[tx,ty]))return [[tx,ty]];
+  const s=nearestCell(sx,sy),t=nearestCell(tx,ty);if(!s||!t)return null;
+  const prev=new Int32Array(GW*GH).fill(-2),q=[s[1]*GW+s[0]];prev[q[0]]=-1;
+  const D=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  for(let h=0;h<q.length;h++){const k=q[h],i=k%GW,j=(k-i)/GW;if(k===t[1]*GW+t[0])break;
+    for(const [di,dj] of D){const ni=i+di,nj=j+dj;if(ni<0||nj<0||ni>=GW||nj>=GH)continue;const nk=nj*GW+ni;
+      if(prev[nk]!==-2||!grid[nk])continue;if(di&&dj&&(!grid[j*GW+ni]||!grid[nj*GW+i]))continue;prev[nk]=k;q.push(nk);}}
+  let k=t[1]*GW+t[0];if(prev[k]===-2)return null;
+  const pts=[];while(k!==-1){const i=k%GW,j=(k-i)/GW;pts.push([i*G+G/2,j*G+G/2]);k=prev[k];}
+  pts.reverse();pts.push([tx,ty]);
+  const out=[];let cur=[sx,sy],idx=0; // 見通しで間引き
+  while(idx<pts.length){let far=idx;for(let m=pts.length-1;m>idx;m--){if(lineOK(cur,pts[m])){far=m;break;}}out.push(pts[far]);cur=pts[far];idx=far+1;}
+  return out;
+}
+
+/* ---------- 入力 ---------- */
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(e.code.startsWith('Arrow'))e.preventDefault();});
+addEventListener('keyup',e=>{keys[e.code]=false;});
+const cv=renderer.domElement;let drag=null;
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,moved:false};});
+cv.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
+  if(Math.hypot(e.clientX-drag.sx,e.clientY-drag.sy)>6)drag.moved=true;
+  if(drag.moved){const k=(camera.fov*Math.PI/180)/innerHeight;st.yaw+=dx*k;st.pitch=THREE.MathUtils.clamp(st.pitch+dy*k,-1.4,1.4);viewTween=null;}});
+cv.addEventListener('pointerup',e=>{if(drag&&!drag.moved)clickMove(e.clientX,e.clientY);drag=null;});
+const ray=new THREE.Raycaster();let model=null;
+function clickMove(px,py){
+  if(!model)return;
+  ray.setFromCamera(new THREE.Vector2(px/innerWidth*2-1,-(py/innerHeight)*2+1),camera);
+  const hit=ray.intersectObject(model,true)[0];if(!hit)return;
+  let x=hit.point.x*1000,y=-hit.point.z*1000;
+  const n=hit.face?hit.face.normal.clone().transformDirection(hit.object.matrixWorld):null;
+  if(!(n&&n.y>0.7&&hit.point.y<0.5)){ // 床以外：そこへ向かって手前の床まで
+    const d=new THREE.Vector2(x-st.x,y-st.y);const L=d.length();if(L<1)return;d.multiplyScalar(Math.max(0,L-500)/L);x=st.x+d.x;y=st.y+d.y;}
+  const p=findPath(st.x,st.y,x,y);if(!p)return;path=p;viewTween=null;
+  const m=document.getElementById('marker');m.style.left=px+'px';m.style.top=py+'px';m.style.opacity=1;setTimeout(()=>m.style.opacity=0,500);
+}
+function tryMove(dx,dy){
+  if(allowed(st.x+dx,st.y+dy)){st.x+=dx;st.y+=dy;return;}
+  if(allowed(st.x+dx,st.y)){st.x+=dx;return;}
+  if(allowed(st.x,st.y+dy)){st.y+=dy;}
+}
+document.getElementById('helpBtn').onclick=()=>document.getElementById('help').classList.remove('hide');
+document.getElementById('closeHelp').onclick=()=>document.getElementById('help').classList.add('hide');
+
+/* ---------- 読み込み ---------- */
+new GLTFLoader().load('model.glb',g=>{
+  model=g.scene;
+  model.traverse(o=>{
+    if(o.isCamera)return;
+    if(o.isMesh){const ms=Array.isArray(o.material)?o.material:[o.material];
+      for(const m of ms){ if(m.envMapIntensity!==undefined)m.envMapIntensity=0.8;
+        if(m.normalMap)m.normalScale.multiplyScalar(0.35); }}
+  });
+  scene.add(model);
+  goView(VIEWS.find(v=>v[0]===START),true);
+  document.getElementById('load').remove();
+  window.__ready=true;
+},e=>{if(e.total){const p=Math.round(e.loaded/e.total*100);document.querySelector('#bar i').style.width=p+'%';document.getElementById('pct').textContent=p+'%';}},
+err=>{document.querySelector('#load div').textContent='読み込みに失敗しました：'+err;});
+
+/* ---------- ループ ---------- */
+const clock=new THREE.Clock();
+function tick(){
+  const dt=Math.min(clock.getDelta(),0.1);
+  if(viewTween){const T=viewTween;T.t+=dt/T.dur;const s=T.t>=1?1:0.5-0.5*Math.cos(Math.PI*T.t);
+    for(const k of ['x','y','eye','yaw','pitch'])st[k]=T.from[k]+(T.to[k]-T.from[k])*s;
+    lensMM=T.from.lens+(T.to.lens-T.from.lens)*s;applyFov();if(T.t>=1)viewTween=null;}
+  else{
+    const sp=(keys.ShiftLeft||keys.ShiftRight?2400:1200)*dt;
+    let f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0);
+    let r=(keys.KeyD?1:0)-(keys.KeyA?1:0);const turn=(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0);
+    st.yaw-=turn*1.6*dt;
+    if(f||r){path=null;const fx=-Math.sin(st.yaw),fy=Math.cos(st.yaw);// Rhino平面上の前方
+      tryMove((fx*f+fy*r)*sp,(fy*f-fx*r)*sp);}
+    if(path){const tgt=path[0];const dx=tgt[0]-st.x,dy=tgt[1]-st.y,L=Math.hypot(dx,dy),step=1400*dt;
+      if(L<=step){st.x=tgt[0];st.y=tgt[1];path.shift();if(!path.length)path=null;}else{st.x+=dx/L*step;st.y+=dy/L*step;}}
+    const e=eyeAt(st.x,st.y);
+    if(f||r||path){st.eye+=(e-st.eye)*Math.min(1,dt*6);} // 歩くと目線1500（厨房+220）へ
+  }
+  camera.position.copy(toGL(st.x,st.y,st.eye));
+  camera.rotation.set(st.pitch,st.yaw,0);
+  renderer.render(scene,camera);
+  requestAnimationFrame(tick);
+}
+applyFov();tick();
+window.__st=st;window.__goView=id=>goView(VIEWS.find(v=>v[0]===id),true);window.__click=clickMove;
+</script>
+</body>
+</html>
