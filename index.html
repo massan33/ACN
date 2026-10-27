@@ -13,7 +13,9 @@
   #title{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.4;pointer-events:auto}
   #title b{font-size:14px;letter-spacing:.04em}
   #title span{color:var(--sub);font-size:12px}
-  #helpBtn{margin-left:auto;pointer-events:auto}
+  #btns{margin-left:auto;display:flex;gap:8px;pointer-events:auto}
+  #vrBtn{border-color:var(--accent);color:var(--accent)}
+  #vrMsg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;font-size:13px;max-width:80vw;z-index:6}
   button{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer}
   button:hover{border-color:rgba(255,255,255,.35)}
   button.on{border-color:var(--accent);color:var(--accent)}
@@ -38,9 +40,10 @@
 <div id="load"><div>モデルを読み込んでいます…</div><div id="bar"><i></i></div><div id="pct">0%</div></div>
 <div id="top">
   <div id="title"><b>ACN銀座ビル10F 内観ウォークスルー</b><br><span id="where">05 北東角から焼台・厨房</span></div>
-  <button id="helpBtn">操作方法</button>
+  <div id="btns"><button id="vrBtn" hidden>VRで見る</button><button id="helpBtn">操作方法</button></div>
 </div>
 <div id="views"></div>
+<div id="vrMsg" hidden></div>
 <div id="marker"></div>
 <div id="help"><div class="box">
   <h2>操作方法</h2>
@@ -49,6 +52,7 @@
     <tr><td>移動する</td><td>床をクリック／タップ</td></tr>
     <tr><td>歩く（PC）</td><td>W A S D または 矢印キー（Shiftで速く）</td></tr>
     <tr><td>視点</td><td>下のボタンで各アングルへ移動</td></tr>
+    <tr><td>VR</td><td>Meta Quest等のブラウザで「VRで見る」。コントローラーで床を指してトリガーで移動、スティック左右で30°ずつ向きを変更</td></tr>
   </table>
   <div style="color:var(--sub);font-size:12px">店内の通路と厨房の中だけを歩けます。目線の高さは1,500mmです。</div>
   <div style="text-align:right;margin-top:14px"><button id="closeHelp">はじめる</button></div>
@@ -108,6 +112,8 @@ scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
 const hemi=new THREE.HemisphereLight(0xffe6c8,0x4a3c30,1.1);scene.add(hemi);
 const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,100);
 camera.rotation.order='YXZ';
+const rig=new THREE.Group();rig.add(camera);scene.add(rig);
+renderer.xr.enabled=true;renderer.xr.setReferenceSpaceType('local-floor');
 const composer=new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene,camera));
 const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),0.45,0.4,1.0);
@@ -270,9 +276,78 @@ function tick(){
   camera.position.copy(toGL(st.x,st.y,st.eye));
   camera.rotation.set(st.pitch,st.yaw,0);
   composer.render();
-  requestAnimationFrame(tick);
 }
-applyFov();tick();
+
+/* ---------- VR（WebXR） ---------- */
+const vrBtn=document.getElementById('vrBtn'),vrMsg=document.getElementById('vrMsg');
+const showMsg=t=>{vrMsg.textContent=t;vrMsg.hidden=false;setTimeout(()=>vrMsg.hidden=true,6000);};
+if(navigator.xr&&navigator.xr.isSessionSupported){navigator.xr.isSessionSupported('immersive-vr').then(ok=>{vrBtn.hidden=!ok;}).catch(()=>{});}
+vrBtn.onclick=async()=>{
+  if(renderer.xr.isPresenting){renderer.xr.getSession().end();return;}
+  try{
+    const ses=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor','bounded-floor']});
+    await renderer.xr.setSession(ses);
+  }catch(e){showMsg('VRを開始できませんでした。Meta Quest等のブラウザで、GitHub Pages版のURLを開いてください。（'+e.message+'）');}
+};
+const floorY=(x,y)=>inKitchen(x,y)?KITCHEN_FL/1000:0;
+renderer.xr.addEventListener('sessionstart',()=>{
+  vrBtn.textContent='VRを終了';
+  rig.position.set(st.x/1000,floorY(st.x,st.y),-st.y/1000);rig.rotation.set(0,st.yaw,0);
+  camera.position.set(0,0,0);camera.rotation.set(0,0,0);
+});
+renderer.xr.addEventListener('sessionend',()=>{
+  vrBtn.textContent='VRで見る';rig.position.set(0,0,0);rig.rotation.set(0,0,0);applyFov();
+});
+try{renderer.xr.setFoveation(1);}catch(e){}
+// コントローラー：レイと着地点リング
+const ctrls=[0,1].map(i=>{
+  const c=renderer.xr.getController(i);rig.add(c);
+  const g=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,0,-1)]);
+  const line=new THREE.Line(g,new THREE.LineBasicMaterial({color:0xd9b36c}));line.scale.z=4;c.add(line);
+  c.userData={line,target:null};
+  c.addEventListener('select',()=>{if(c.userData.target)teleport(c.userData.target);});
+  return c;
+});
+const ring=new THREE.Mesh(new THREE.RingGeometry(0.16,0.2,40).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0xd9b36c,transparent:true,opacity:0.9,depthTest:false}));
+ring.visible=false;scene.add(ring);
+const _o=new THREE.Vector3(),_d=new THREE.Vector3(),_q=new THREE.Quaternion(),_h=new THREE.Vector3();
+function aimFloor(c){
+  c.updateMatrixWorld();_o.setFromMatrixPosition(c.matrixWorld);
+  _d.set(0,0,-1).applyQuaternion(c.getWorldQuaternion(_q));
+  if(_d.y>-0.05)return null;
+  for(const fy of [0,KITCHEN_FL/1000]){
+    const t=(fy-_o.y)/_d.y;if(t<=0||t>12)continue;
+    const px=_o.x+_d.x*t,pz=_o.z+_d.z*t,x=px*1000,y=-pz*1000;
+    if(allowed(x,y)&&Math.abs(floorY(x,y)-fy)<1e-3)return {x,y,p:new THREE.Vector3(px,fy,pz),t};
+  }
+  return null;
+}
+function teleport(tg){
+  camera.getWorldPosition(_h);
+  rig.position.x+=tg.p.x-_h.x;rig.position.z+=tg.p.z-_h.z;rig.position.y=tg.p.y;
+  st.x=tg.x;st.y=tg.y;
+}
+let snapLatch=false;
+function snapTurn(a){
+  camera.getWorldPosition(_h);const before=_h.clone();
+  rig.rotation.y+=a;rig.updateMatrixWorld(true);camera.updateMatrixWorld(true);
+  camera.getWorldPosition(_h);rig.position.x+=before.x-_h.x;rig.position.z+=before.z-_h.z;
+}
+function xrUpdate(){
+  let shown=null;
+  for(const c of ctrls){const tg=aimFloor(c);c.userData.target=tg;
+    c.userData.line.scale.z=tg?tg.t:4;if(tg&&!shown)shown=tg;}
+  ring.visible=!!shown;if(shown)ring.position.copy(shown.p).add(new THREE.Vector3(0,0.01,0));
+  const ses=renderer.xr.getSession();let ax=0;
+  if(ses)for(const src of ses.inputSources){const gp=src.gamepad;if(gp&&gp.axes.length>=4&&Math.abs(gp.axes[2])>Math.abs(ax))ax=gp.axes[2];}
+  if(Math.abs(ax)>0.7&&!snapLatch){snapTurn(ax>0?-Math.PI/6:Math.PI/6);snapLatch=true;}
+  if(Math.abs(ax)<0.3)snapLatch=false;
+}
+function loop(){
+  if(renderer.xr.isPresenting){clock.getDelta();xrUpdate();renderer.render(scene,camera);}
+  else tick();
+}
+applyFov();renderer.setAnimationLoop(loop);
 window.__st=st;window.__goView=id=>goView(VIEWS.find(v=>v[0]===id),true);window.__click=clickMove;
 </script>
 </body>
