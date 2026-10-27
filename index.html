@@ -59,6 +59,10 @@
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 
 /* ---------- 歩行可能範囲（Rhino座標 mm、walk_core.py と同じ） ---------- */
 const WALK_SEAT=[[150,1150,2700,1914],[2470,910,5900,1914],[4874,910,5900,3842],[4874,910,5535,8346],[2129,7662,5535,8346],[1700,8062,2200,8346]];
@@ -94,15 +98,48 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.35;
+renderer.toneMappingExposure=1.6;
+const MOBILE=matchMedia('(pointer:coarse)').matches;
 document.body.prepend(renderer.domElement);
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x0c0c0c);
 const pmrem=new THREE.PMREMGenerator(renderer);
 scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
-scene.add(new THREE.HemisphereLight(0xfff1dd,0x2a2622,0.9));
+const hemi=new THREE.HemisphereLight(0xffe6c8,0x4a3c30,1.1);scene.add(hemi);
 const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,100);
 camera.rotation.order='YXZ';
+const composer=new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+const bloom=new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight),0.45,0.4,1.0);
+composer.addPass(bloom);composer.addPass(new OutputPass());
+
+/* ---------- 照明：発光面からダウンライト等を配置 ---------- */
+const WARM=new THREE.Color(1.0,0.80,0.58);
+function setupLights(root){
+  root.updateMatrixWorld(true);
+  const found={dl:[],line:[]};const box=new THREE.Box3(),c=new THREE.Vector3(),sz=new THREE.Vector3();
+  root.traverse(o=>{
+    if(!o.isMesh)return;const n=(o.material&&o.material.name)||'';
+    if(!n.includes('発光'))return;
+    o.material.emissive=WARM.clone();
+    box.setFromObject(o);box.getCenter(c);box.getSize(sz);
+    if(n.includes('DL')){o.material.emissiveIntensity=12;o.material.color.set(0xffffff);found.dl.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
+    else if(n.includes('ライン')){o.material.emissiveIntensity=1.2;found.line.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
+    else {o.material.emissiveIntensity=0.9;}
+  });
+  const near=(arr,p,d)=>arr.some(q=>q.p.distanceTo(p)<d);
+  const dls=[];for(const f of found.dl)if(!near(dls,f.p,0.05))dls.push(f);
+  for(const f of dls){
+    const narrow=f.s<0.06;// φ25 マイクロダウンライト 24°
+    const sp=new THREE.SpotLight(0xffd9a8,narrow?28:40,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
+    sp.position.copy(f.p).add(new THREE.Vector3(0,-0.02,0));
+    sp.target.position.copy(f.p).add(new THREE.Vector3(0,-3,0));
+    scene.add(sp,sp.target);
+  }
+  const lines=[];for(const f of found.line)if(!near(lines,f.p,0.4))lines.push(f);
+  if(!MOBILE||lines.length<=8)for(const f of lines){const pl=new THREE.PointLight(0xffd2a0,1.5,4,2);pl.position.copy(f.p).add(new THREE.Vector3(0,-0.08,0));scene.add(pl);}
+  window.__lights={dl:dls.length,line:lines.length};
+}
 
 // Rhino(mm, Z上) → glTF(m, Y上)
 const toGL=(x,y,z)=>new THREE.Vector3(x/1000,z/1000,-y/1000);
@@ -115,7 +152,7 @@ function applyFov(){ // 横画角をレンズ基準で保ち、縦長画面で�
   camera.fov=Math.min(THREE.MathUtils.radToDeg(vf),100);
   camera.aspect=a;camera.updateProjectionMatrix();
 }
-addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);applyFov();});
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);applyFov();});
 
 /* 状態（Rhino座標 mm） */
 const st={x:5450,y:8250,eye:1500,yaw:0,pitch:0};
@@ -200,10 +237,11 @@ new GLTFLoader().load('model.glb',g=>{
   model.traverse(o=>{
     if(o.isCamera)return;
     if(o.isMesh){const ms=Array.isArray(o.material)?o.material:[o.material];
-      for(const m of ms){ if(m.envMapIntensity!==undefined)m.envMapIntensity=0.8;
+      for(const m of ms){ m.side=THREE.DoubleSide; if(m.envMapIntensity!==undefined)m.envMapIntensity=0.55;
         if(m.normalMap)m.normalScale.multiplyScalar(0.35); }}
   });
   scene.add(model);
+  setupLights(model);
   goView(VIEWS.find(v=>v[0]===START),true);
   document.getElementById('load').remove();
   window.__ready=true;
@@ -231,7 +269,7 @@ function tick(){
   }
   camera.position.copy(toGL(st.x,st.y,st.eye));
   camera.rotation.set(st.pitch,st.yaw,0);
-  renderer.render(scene,camera);
+  composer.render();
   requestAnimationFrame(tick);
 }
 applyFov();tick();
