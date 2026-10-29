@@ -102,7 +102,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.4;
+renderer.toneMappingExposure=1.15;
 const MOBILE=matchMedia('(pointer:coarse)').matches;
 document.body.prepend(renderer.domElement);
 const scene=new THREE.Scene();
@@ -264,7 +264,7 @@ function applyLightmap(root){
     for(const m of ms){
       const nm=m.name||'';
       if(nm.includes('発光')||nm.includes('ガラス')||(m.transmission||0)>0)continue;
-      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*(nm.includes('天井突板')?0.6:1);
+      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*((nm.includes('天井突板')||nm.includes('竿縁'))?0.55:1);
       if(m.envMapIntensity!==undefined)m.envMapIntensity=0.12;
       m.needsUpdate=true;n++;
     }
