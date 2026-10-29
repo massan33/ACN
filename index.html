@@ -102,7 +102,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.15;
+renderer.toneMappingExposure=1.25;
 const MOBILE=matchMedia('(pointer:coarse)').matches;
 document.body.prepend(renderer.domElement);
 const scene=new THREE.Scene();
@@ -264,12 +264,37 @@ function applyLightmap(root){
     for(const m of ms){
       const nm=m.name||'';
       if(nm.includes('発光')||nm.includes('ガラス')||(m.transmission||0)>0)continue;
-      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*((nm.includes('天井突板')||nm.includes('竿縁'))?0.55:1);
+      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*((nm.includes('天井突板')||nm.includes('竿縁'))?0.85:(nm.includes('フード囲い')?0.4:1));
       if(m.envMapIntensity!==undefined)m.envMapIntensity=0.12;
       m.needsUpdate=true;n++;
     }
   });
   window.__lm=n;
+}
+
+/* ---------- のれんの揺れ ---------- */
+const noren=[];
+function setupNoren(root){
+  root.traverse(o=>{
+    if(!o.isMesh)return;const nm=(o.material&&o.material.name)||'';
+    if(!nm.includes('暖簾'))return;
+    const pos=o.geometry.attributes.position;
+    let ymin=1e9,ymax=-1e9;for(let i=0;i<pos.count;i++){const y=pos.getY(i);ymin=Math.min(ymin,y);ymax=Math.max(ymax,y);}
+    o.material.side=THREE.DoubleSide;
+    noren.push({o,pos,base:Float32Array.from(pos.array),ymin,ymax});
+  });
+}
+function animateNoren(t){
+  for(const n of noren){
+    const a=n.pos.array,b=n.base,h=n.ymax-n.ymin;
+    for(let i=0;i<a.length;i+=3){
+      const k=(n.ymax-b[i+1])/h, w=k*k;            // 上(棒側)は0、裾ほど大きく
+      const z=b[i+2];
+      a[i]  =b[i]+w*(0.018*Math.sin(t*0.9+z*9.0)+0.008*Math.sin(t*2.1+z*23.0));
+      a[i+2]=b[i+2]+w*0.006*Math.sin(t*1.3+z*5.0);
+    }
+    n.pos.needsUpdate=true;
+  }
 }
 
 /* ---------- 読み込み ---------- */
@@ -284,6 +309,7 @@ new GLTFLoader().load('model.glb',g=>{
   scene.add(model);
   setupLights(model);
   if(BAKED)applyLightmap(model);
+  setupNoren(model);
   goView(VIEWS.find(v=>v[0]===START),true);
   document.getElementById('load').remove();
   window.__ready=true;
@@ -311,6 +337,7 @@ function tick(){
   }
   camera.position.copy(toGL(st.x,st.y,st.eye));
   camera.rotation.set(st.pitch,st.yaw,0);
+  animateNoren(clock.elapsedTime);
   composer.render();
 }
 
@@ -380,7 +407,7 @@ function xrUpdate(){
   if(Math.abs(ax)<0.3)snapLatch=false;
 }
 function loop(){
-  if(renderer.xr.isPresenting){clock.getDelta();xrUpdate();renderer.render(scene,camera);}
+  if(renderer.xr.isPresenting){clock.getDelta();xrUpdate();animateNoren(clock.elapsedTime);renderer.render(scene,camera);}
   else tick();
 }
 applyFov();renderer.setAnimationLoop(loop);
