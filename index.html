@@ -136,6 +136,9 @@ function setupLights(root){
     else if(n.includes('ライン')){o.material.emissiveIntensity=0.45;found.line.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
     else {o.material.emissiveIntensity=0.9;}
   });
+  // 障子紙：裏の間接照明で発光して見えるように
+  root.traverse(o=>{if(o.isMesh&&o.material&&(o.material.name||'').includes('障子紙')&&!o.material.userData.glow){
+    const m=o.material;m.emissive=new THREE.Color(1.0,0.82,0.58);if(m.map)m.emissiveMap=m.map;m.emissiveIntensity=0.7;m.userData.glow=true;m.needsUpdate=true;}});
   // 天井の突板：照り返しで明るく見えるよう、ごく弱く自己発光させる
   if(!BAKED)root.traverse(o=>{if(o.isMesh&&o.material&&(o.material.name||'').includes('天井突板')&&o.material.map&&!o.material.userData.lit){
     o.material.emissiveMap=o.material.map;o.material.emissive=new THREE.Color(1,0.86,0.7);o.material.emissiveIntensity=0.22;o.material.userData.lit=true;o.material.needsUpdate=true;}});
@@ -264,7 +267,7 @@ function applyLightmap(root){
     for(const m of ms){
       const nm=m.name||'';
       if(nm.includes('発光')||nm.includes('ガラス')||(m.transmission||0)>0)continue;
-      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*((nm.includes('天井突板')||nm.includes('竿縁'))?0.85:(nm.includes('フード囲い')?0.4:1));
+      m.lightMap=t;m.lightMapIntensity=BAKED.intensity*((nm.includes('天井突板')||nm.includes('竿縁'))?0.85:nm.includes('フード囲い')?0.4:nm.includes('暖簾')?1.5:nm.includes('カウンター天板')?1.15:1);
       if(m.envMapIntensity!==undefined)m.envMapIntensity=0.12;
       m.needsUpdate=true;n++;
     }
@@ -304,7 +307,9 @@ new GLTFLoader().load('model.glb',g=>{
     if(o.isCamera)return;
     if(o.isMesh){const ms=Array.isArray(o.material)?o.material:[o.material];
       for(const m of ms){ m.side=THREE.DoubleSide; if(m.envMapIntensity!==undefined)m.envMapIntensity=0.55;
-        if(m.normalMap)m.normalScale.multiplyScalar(0.35); }}
+        if(m.normalMap)m.normalScale.multiplyScalar(0.35);
+        const aniso=renderer.capabilities.getMaxAnisotropy();
+        for(const k of ['map','normalMap','roughnessMap','emissiveMap'])if(m[k]){m[k].anisotropy=aniso;m[k].needsUpdate=true;} }}
   });
   scene.add(model);
   setupLights(model);
