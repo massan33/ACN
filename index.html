@@ -102,14 +102,14 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.6;
+renderer.toneMappingExposure=1.25;
 const MOBILE=matchMedia('(pointer:coarse)').matches;
 document.body.prepend(renderer.domElement);
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x0c0c0c);
 const pmrem=new THREE.PMREMGenerator(renderer);
 scene.environment=pmrem.fromScene(new RoomEnvironment(),0.04).texture;
-const hemi=new THREE.HemisphereLight(0xffe6c8,0x4a3c30,1.1);scene.add(hemi);
+const hemi=new THREE.HemisphereLight(0xfff3e8,0x3c3632,1.0);scene.add(hemi);
 const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.05,100);
 camera.rotation.order='YXZ';
 const rig=new THREE.Group();rig.add(camera);scene.add(rig);
@@ -133,11 +133,24 @@ function setupLights(root){
     else if(n.includes('ライン')){o.material.emissiveIntensity=0.45;found.line.push({p:c.clone(),s:Math.max(sz.x,sz.z)});}
     else {o.material.emissiveIntensity=0.9;}
   });
+  // 天井の突板：照り返しで明るく見えるよう、ごく弱く自己発光させる
+  root.traverse(o=>{if(o.isMesh&&o.material&&(o.material.name||'').includes('天井突板')&&o.material.map&&!o.material.userData.lit){
+    o.material.emissiveMap=o.material.map;o.material.emissive=new THREE.Color(1,0.86,0.7);o.material.emissiveIntensity=0.22;o.material.userData.lit=true;o.material.needsUpdate=true;}});
+  // フード上端のテープライト（Rhinoでは面光源のため書き出されない分を補う）
+  {const x0=2483,x1=3327,y0=3708,y1=5944,zt=2366,zb=2338,off=4;
+   const mat=new THREE.MeshBasicMaterial({color:new THREE.Color(1.0,0.78,0.5).multiplyScalar(2.2),toneMapped:true});
+   const band=(ax,ay,bx,by)=>{const len=Math.hypot(bx-ax,by-ay)/1000,h=(zt-zb)/1000;
+     const m=new THREE.Mesh(new THREE.PlaneGeometry(len,h),mat);
+     m.position.copy(toGL((ax+bx)/2,(ay+by)/2,(zt+zb)/2));
+     m.lookAt(toGL((ax+bx)/2+(by-ay),(ay+by)/2-(bx-ax),(zt+zb)/2));m.material.side=THREE.DoubleSide;scene.add(m);};
+   band(x0-off,y0-off,x1+off,y0-off);band(x1+off,y0-off,x1+off,y1+off);band(x1+off,y1+off,x0-off,y1+off);band(x0-off,y1+off,x0-off,y0-off);
+   for(const [x,y] of [[x0-80,(y0+y1)/2],[x1+80,(y0+y1)/2],[(x0+x1)/2,y0-80],[(x0+x1)/2,y1+80],[x0-80,y0+500],[x1+80,y1-500]]){
+     const pl=new THREE.PointLight(0xffc890,0.12,0.9,2);pl.position.copy(toGL(x,y,2320));scene.add(pl);}}
   const near=(arr,p,d)=>arr.some(q=>q.p.distanceTo(p)<d);
   const dls=[];for(const f of found.dl)if(!near(dls,f.p,0.05))dls.push(f);
   for(const f of dls){
     const narrow=f.s<0.06;// φ25 マイクロダウンライト 24°
-    const sp=new THREE.SpotLight(0xffd9a8,narrow?8:14,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
+    const sp=new THREE.SpotLight(0xffd9a8,narrow?10:16,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
     sp.position.copy(f.p).add(new THREE.Vector3(0,-0.02,0));
     sp.target.position.copy(f.p).add(new THREE.Vector3(0,-3,0));
     scene.add(sp,sp.target);
