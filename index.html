@@ -102,7 +102,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setSize(innerWidth,innerHeight);
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.25;
+renderer.toneMappingExposure=1.6;
 const MOBILE=matchMedia('(pointer:coarse)').matches;
 document.body.prepend(renderer.domElement);
 const scene=new THREE.Scene();
@@ -121,6 +121,9 @@ composer.addPass(bloom);composer.addPass(new OutputPass());
 
 /* ---------- 照明：発光面からダウンライト等を配置 ---------- */
 const WARM=new THREE.Color(1.0,0.80,0.58);
+/* Blenderで焼き込んだライトマップ（2つ目のUV）。null にすると従来のリアルタイム照明 */
+const BAKED={map:'lightmap.jpg',intensity:4.5};
+if(BAKED){hemi.intensity=0;}
 function setupLights(root){
   root.updateMatrixWorld(true);
   const found={dl:[],line:[]};const box=new THREE.Box3(),c=new THREE.Vector3(),sz=new THREE.Vector3();
@@ -134,7 +137,7 @@ function setupLights(root){
     else {o.material.emissiveIntensity=0.9;}
   });
   // 天井の突板：照り返しで明るく見えるよう、ごく弱く自己発光させる
-  root.traverse(o=>{if(o.isMesh&&o.material&&(o.material.name||'').includes('天井突板')&&o.material.map&&!o.material.userData.lit){
+  if(!BAKED)root.traverse(o=>{if(o.isMesh&&o.material&&(o.material.name||'').includes('天井突板')&&o.material.map&&!o.material.userData.lit){
     o.material.emissiveMap=o.material.map;o.material.emissive=new THREE.Color(1,0.86,0.7);o.material.emissiveIntensity=0.22;o.material.userData.lit=true;o.material.needsUpdate=true;}});
   // フード上端のテープライト（Rhinoでは面光源のため書き出されない分を補う）
   {const x0=2483,x1=3327,y0=3708,y1=5944,zt=2366,zb=2338,off=4;
@@ -144,11 +147,11 @@ function setupLights(root){
      m.position.copy(toGL((ax+bx)/2,(ay+by)/2,(zt+zb)/2));
      m.lookAt(toGL((ax+bx)/2+(by-ay),(ay+by)/2-(bx-ax),(zt+zb)/2));m.material.side=THREE.DoubleSide;scene.add(m);};
    band(x0-off,y0-off,x1+off,y0-off);band(x1+off,y0-off,x1+off,y1+off);band(x1+off,y1+off,x0-off,y1+off);band(x0-off,y1+off,x0-off,y0-off);
-   for(const [x,y] of [[x0-80,(y0+y1)/2],[x1+80,(y0+y1)/2],[(x0+x1)/2,y0-80],[(x0+x1)/2,y1+80],[x0-80,y0+500],[x1+80,y1-500]]){
+   if(!BAKED)for(const [x,y] of [[x0-80,(y0+y1)/2],[x1+80,(y0+y1)/2],[(x0+x1)/2,y0-80],[(x0+x1)/2,y1+80],[x0-80,y0+500],[x1+80,y1-500]]){
      const pl=new THREE.PointLight(0xffc890,0.12,0.9,2);pl.position.copy(toGL(x,y,2320));scene.add(pl);}}
   const near=(arr,p,d)=>arr.some(q=>q.p.distanceTo(p)<d);
   const dls=[];for(const f of found.dl)if(!near(dls,f.p,0.05))dls.push(f);
-  for(const f of dls){
+  if(!BAKED)for(const f of dls){
     const narrow=f.s<0.06;// φ25 マイクロダウンライト 24°
     const sp=new THREE.SpotLight(0xffd9a8,narrow?10:16,8,narrow?0.38:0.75,narrow?0.55:0.6,2);
     sp.position.copy(f.p).add(new THREE.Vector3(0,-0.02,0));
@@ -250,6 +253,25 @@ function tryMove(dx,dy){
 document.getElementById('helpBtn').onclick=()=>document.getElementById('help').classList.remove('hide');
 document.getElementById('closeHelp').onclick=()=>document.getElementById('help').classList.add('hide');
 
+/* ---------- ライトマップ ---------- */
+function applyLightmap(root){
+  const t=new THREE.TextureLoader().load(BAKED.map);
+  t.flipY=false;t.channel=1;t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=4;
+  let n=0;
+  root.traverse(o=>{
+    if(!o.isMesh||!o.geometry.attributes.uv1)return;
+    const ms=Array.isArray(o.material)?o.material:[o.material];
+    for(const m of ms){
+      const nm=m.name||'';
+      if(nm.includes('発光')||nm.includes('ガラス')||(m.transmission||0)>0)continue;
+      m.lightMap=t;m.lightMapIntensity=BAKED.intensity;
+      if(m.envMapIntensity!==undefined)m.envMapIntensity=0.12;
+      m.needsUpdate=true;n++;
+    }
+  });
+  window.__lm=n;
+}
+
 /* ---------- 読み込み ---------- */
 new GLTFLoader().load('model.glb',g=>{
   model=g.scene;
@@ -261,6 +283,7 @@ new GLTFLoader().load('model.glb',g=>{
   });
   scene.add(model);
   setupLights(model);
+  if(BAKED)applyLightmap(model);
   goView(VIEWS.find(v=>v[0]===START),true);
   document.getElementById('load').remove();
   window.__ready=true;
